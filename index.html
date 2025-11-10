@@ -203,33 +203,31 @@
 
         // --- FUNCIÓN PARA ENVIAR DATOS A GOOGLE SHEET VÍA FORMULARIO ---
         async function sendToGoogleSheet() {
-            if (!lastBarcode || isSending) return;
-
-            if (FORM_URL.includes('REEMPLAZAR') || FORM_ENTRY_ID_BARCODE.includes('REEMPLAZAR')) {
-                showModal('Error de Configuración', 'Las variables de URL y Entry ID no han sido configuradas. Revisa FORM_URL y FORM_ENTRY_ID_BARCODE.');
+            if (!lastBarcode || isSending) {
+                return;
+            }
+            if (FORM_URL.includes('REEMPLAZAR') || FORM_ENTRY_ID.includes('REEMPLAZAR')) {
+                showModal('Error de Configuración', 'Las variables FORM_URL y FORM_ENTRY_ID no han sido configuradas. Sigue los pasos de configuración.');
                 return;
             }
 
-            // Validar longitud del código de barras COMPLETO
+            // **** NUEVA VALIDACIÓN: DEBE TENER EXACTAMENTE 20 CARACTERES ****
             if (lastBarcode.length !== REQUIRED_LENGTH) {
-                showModal('Error de Validación', `El código de barras debe tener exactamente ${REQUIRED_LENGTH} caracteres para ser enviado.`);
-                return; 
+                showModal('Error de Validación', `El código de barras debe tener exactamente ${REQUIRED_LENGTH} caracteres para ser enviado. El código actual tiene ${lastBarcode.length} caracteres.`);
+                return; // Detiene el proceso de envío
             }
-
-            // --- LÓGICA DE TRUNCAMIENTO: Eliminar los primeros dos dígitos ---
-            const trimmedBarcode = lastBarcode.substring(2);
+            // ***************************************************************
 
             isSending = true;
             sendButton.disabled = true;
             sendText.classList.add('hidden');
             loadingSpinner.classList.remove('hidden');
             restartButton.disabled = true;
-            
-            // Construir FormData
+
             const formData = new FormData();
-            // AQUI se envía el código recortado (trimmedBarcode)
-            formData.append(FORM_ENTRY_ID_BARCODE, trimmedBarcode); 
+            formData.append(FORM_ENTRY_ID, lastBarcode);
             
+            // Se usa el modo 'no-cors' para permitir el envío al endpoint de Google Forms sin un servidor
             try {
                 const response = await fetch(FORM_URL, {
                     method: 'POST',
@@ -237,8 +235,8 @@
                     body: formData
                 });
 
-                // Mensaje de éxito informando el código que realmente se envió
-                showModal('¡Éxito!', `Código original: "${lastBarcode}". Enviado a la hoja: "${trimmedBarcode}".`);
+                // La respuesta es siempre "opaque" en 'no-cors', asumimos éxito si no hay error de red
+                showModal('¡Éxito!', `HU: "${lastBarcode}" enviado. Puedes escanear el siguiente.`);
 
                 // Preparar para el próximo escaneo
                 lastBarcode = null;
@@ -249,10 +247,10 @@
                 showModal('Error de Envío', 'Hubo un error de conexión al enviar el dato. Verifica la URL del Formulario.');
             } finally {
                 isSending = false;
+                // El botón de enviar permanece deshabilitado hasta que se escanee un nuevo código.
                 sendText.classList.remove('hidden');
                 loadingSpinner.classList.add('hidden');
                 restartButton.disabled = false;
-                checkSendAbility();
             }
         }
 
@@ -281,4 +279,5 @@
     </script>
 </body>
 </html>
+
 
