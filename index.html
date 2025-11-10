@@ -174,30 +174,35 @@
 
         // --- MANEJADOR DE ESCANEO EXITOSO ---
         Quagga.onDetected(function(data) {
-            if (scannerRunning) {
-                lastBarcode = data.codeResult.code;
-                resultDisplay.textContent = lastBarcode;
+            if (scannerRunning && !detectionCooldown) {
                 
-                // Verifica la longitud inmediatamente después del escaneo
-                if (lastBarcode.length === REQUIRED_LENGTH) {
-                    sendButton.disabled = false;
-                    errorMessageDisplay.classList.add('hidden');
-                } else {
-                    sendButton.disabled = true;
-                    errorMessageDisplay.textContent = `Código leído (${lastBarcode.length} caracteres) no tiene la longitud requerida de ${REQUIRED_LENGTH} caracteres.`;
-                    errorMessageDisplay.classList.remove('hidden');
-                }
-
-                restartButton.style.display = 'block';
-
-                // Detener el escáner inmediatamente después de la detección exitosa
-                Quagga.stop();
-                scannerRunning = false;
-                console.log("Escaneo exitoso y detenido. Código:", lastBarcode);
+                // Activa el cooldown para ignorar detecciones duplicadas durante 1.5s
+                detectionCooldown = true;
                 
-                // Asegurar que el mensaje de carga no reaparezca si se detiene (aunque ya está oculto)
-                const loadingDiv = document.querySelector('#interactive div');
-                if (loadingDiv) loadingDiv.style.display = 'none';
+                // Detener el escáner y procesar después del retraso
+                setTimeout(() => {
+                    if (scannerRunning) {
+                        Quagga.stop();
+                        scannerRunning = false;
+                    }
+
+                    lastBarcode = data.codeResult.code;
+                    resultDisplay.textContent = lastBarcode;
+                    
+                    // 1. Verifica la longitud del código de barras (20 caracteres)
+                    if (lastBarcode.length === REQUIRED_LENGTH) {
+                        errorMessageDisplay.classList.add('hidden');
+                    } else {
+                        errorMessageDisplay.textContent = `Código leído (${lastBarcode.length} caracteres) no tiene la longitud requerida de ${REQUIRED_LENGTH} caracteres.`;
+                        errorMessageDisplay.classList.remove('hidden');
+                    }
+
+                    restartButton.style.display = 'block';
+                    checkSendAbility(); // Habilita o deshabilita el botón 'Enviar'
+                    
+                    detectionCooldown = false; // Restablece el cooldown (Aunque Quagga.stop() ya fue llamado)
+
+                }, 1500); // Retraso de 1.5 segundos (1500 ms)
             }
         });
 
@@ -279,6 +284,7 @@
     </script>
 </body>
 </html>
+
 
 
 
