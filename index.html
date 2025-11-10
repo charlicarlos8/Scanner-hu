@@ -19,12 +19,13 @@
             overflow: hidden;
             border-radius: 1rem;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            background-color: #374151; /* Fondo oscuro mientras espera */
         }
         #scanner-video {
             width: 100%;
             height: 100%;
             object-fit: cover; /* Asegura que el video llene el contenedor */
-            transform: scaleX(-1); /* Espejo para vista frontal más natural */
+            /* No aplicar espejo (transform: scaleX(-1)) ya que usaremos la cámara trasera */
         }
     </style>
 </head>
@@ -94,7 +95,7 @@
         async function sendToSheet(barcode) {
             showStatus('Enviando código: ' + barcode + '...', 'info');
             
-            // Aquí puedes detener el escaneo si deseas, o dejarlo en pausa.
+            // Detener el escaneo para evitar lecturas duplicadas mientras se envía
             codeReader.reset();
             isScanning = false;
             startBtn.disabled = false;
@@ -106,9 +107,8 @@
                 appId: appId,
             };
 
-            // Verificar si la URL del script es válida
             if (APPS_SCRIPT_URL === 'YOUR_APPS_SCRIPT_WEB_APP_URL') {
-                showStatus('Error de Configuración: Reemplaza YOUR_APPS_SCRIPT_WEB_APP_URL con tu URL de Google Apps Script desplegado.', 'error');
+                showStatus('Error de Configuración: La URL de Apps Script no está configurada.', 'error');
                 return;
             }
 
@@ -137,7 +137,6 @@
                 showStatus('Error de red: Verifica la conexión o la URL del script.', 'error');
             }
 
-            // Muestra el resultado y luego vuelve a 'Esperando...'
             resultElement.textContent = barcode;
             setTimeout(() => {
                 resultElement.textContent = 'Presiona "Iniciar Escaneo"';
@@ -151,12 +150,12 @@
             isScanning = true;
             startBtn.disabled = true;
             startBtn.textContent = 'Cargando cámara...';
-            showStatus('Cargando cámara...', 'info');
+            showStatus('Solicitando permiso de cámara...', 'info');
             resultElement.textContent = 'Buscando cámara...';
 
-            // *** Verificación de Contexto Seguro (HTTPS) ***
+            // Comprobación de contexto seguro (HTTPS)
             if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-                 showStatus('Error de Seguridad: La cámara requiere HTTPS. Por favor, despliega en un servicio de hosting seguro (GitHub Pages/Vercel).', 'error');
+                 showStatus('Error de Seguridad: La cámara requiere HTTPS. Por favor, despliega en un servicio de hosting seguro.', 'error');
                  isScanning = false;
                  startBtn.disabled = false;
                  startBtn.textContent = 'Iniciar Escaneo';
@@ -164,57 +163,49 @@
                  return;
             }
 
-            codeReader.getVideoInputDevices()
-                .then((videoInputDevices) => {
-                    let selectedDeviceId;
-                    // Intenta usar la cámara trasera si la encuentra (es mejor para escanear)
-                    const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('trasera'));
-                    
-                    if (backCamera) {
-                        selectedDeviceId = backCamera.deviceId;
-                    } else if (videoInputDevices.length > 0) {
-                        selectedDeviceId = videoInputDevices[0].deviceId;
-                    }
+            // Usamos decodeFromInputVideoDevice con 'environment' para forzar la cámara trasera,
+            // que es lo más común en móviles para escaneo.
+            codeReader.decodeFromInputVideoDevice({ facingMode: 'environment' }, 'scanner-video', (result, err) => {
+                if (result) {
+                    const barcode = result.getText();
+                    console.log('Código detectado:', barcode);
+                    sendToSheet(barcode);
+                }
 
-                    if (selectedDeviceId) {
-                        showStatus('Cámara lista. Apunta al código de barras.', 'info');
-                        resultElement.textContent = 'Esperando escaneo...';
-                        startBtn.textContent = 'Escaneo en curso...';
-                        
-                        // Iniciar decodificación de video
-                        codeReader.decodeFromVideoDevice(selectedDeviceId, 'scanner-video', (result, err) => {
-                            if (result) {
-                                // Código escaneado con éxito
-                                const barcode = result.getText();
-                                console.log('Código detectado:', barcode);
+                if (err && !(err instanceof ZXing.NotFoundException)) {
+                    // Ignoramos el error de "not found", que es normal.
+                    console.error('Error durante la decodificación:', err);
+                }
+            })
+            .catch((err) => {
+                console.error('Error de acceso/detección:', err);
+                isScanning = false;
+                startBtn.disabled = false;
+                startBtn.textContent = 'Iniciar Escaneo';
+                resultElement.textContent = 'Presiona "Iniciar Escaneo"';
 
-                                // Enviar datos y luego reiniciar el proceso
-                                sendToSheet(barcode);
-                            }
-                            // Si err es NotFoundException, no hacemos nada, es el comportamiento normal de ZXing.
-                            if (err && !(err instanceof ZXing.NotFoundException)) {
-                                console.error(err);
-                            }
-                        });
-                    } else {
-                        showStatus('Error: No se encontraron cámaras disponibles.', 'error');
-                        startBtn.disabled = false;
-                        startBtn.textContent = 'Iniciar Escaneo';
-                        isScanning = false;
-                    }
-                })
-                .catch((err) => {
-                    console.error('Error de acceso a la cámara:', err);
-                    isScanning = false;
-                    startBtn.disabled = false;
-                    startBtn.textContent = 'Iniciar Escaneo';
+                let errorMessage = 'Error al detectar o acceder a la cámara.';
 
-                    // Mensaje de error más genérico si falla después de la comprobación HTTPS
-                    showStatus('Permiso Denegado: Habilita el acceso a la cámara en la configuración de tu navegador.', 'error');
-                });
+                if (err.name === 'NotAllowedError') {
+                    errorMessage = 'Permiso Denegado: Habilita el acceso a la cámara en la configuración del navegador o del sistema.';
+                } else if (err.name === 'NotFoundError') {
+                    errorMessage = 'Cámara No Encontrada: Asegúrate de que tu dispositivo tenga una cámara y que no esté siendo usada por otra aplicación.';
+                } else if (err.name === 'NotReadableError') {
+                    errorMessage = 'Hardware Ocupado: Otra aplicación está usando la cámara. Ciérrala e intenta de nuevo.';
+                }
+
+                showStatus(errorMessage, 'error');
+            });
+
+            // Si llegamos hasta aquí, asumimos que el proceso de permisos se inició
+            // y solo actualizamos el mensaje de estado si no hay errores inmediatos.
+            if (isScanning) {
+                showStatus('Cámara solicitada. Esperando permiso...', 'info');
+                startBtn.textContent = 'Escaneo activo...';
+            }
         }
 
-        // Evento para iniciar el escaneo al hacer clic en el botón (ahora es obligatorio)
+        // Evento para iniciar el escaneo (iniciado por el usuario)
         startBtn.addEventListener('click', startScan);
         
     </script>
