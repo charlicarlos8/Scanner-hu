@@ -13,7 +13,7 @@
         #interactive.viewport {
             width: 100%;
             max-width: 400px; /* Ancho máximo para mejor visualización móvil */
-            height: 200px;
+            height: 200px; /* Altura ajustada verticalmente */
             margin: 0 auto;
             position: relative;
             overflow: hidden;
@@ -42,9 +42,9 @@
     <!-- Contenedor Principal -->
     <div class="max-w-md w-full mx-auto bg-white rounded-xl shadow-2xl p-6 space-y-6">
 
-        <h1 class="text-3xl font-bold text-center text-gray-800">REGISTRO DE HU</h1>
-        <p class="text-center text-gray-600 text-sm">Apunta la cámara al código de barras con el HU.</p>
-
+        <h1 class="text-3xl font-bold text-center text-gray-800">Escáner de Inventario</h1>
+        <p class="text-center text-gray-600 text-sm">Apunta la cámara al código de barras.</p>
+        
         <!-- Área de Previsualización de la Cámara -->
         <div id="interactive" class="viewport shadow-inner bg-gray-900 flex items-center justify-center">
             <div class="text-white text-center">Cargando Cámara...</div>
@@ -52,10 +52,11 @@
 
         <!-- Panel de Resultado del Escaneo -->
         <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-900 p-4 rounded-md shadow-md">
-            <p class="font-semibold mb-1">HU Leído:</p>
+            <p class="font-semibold mb-1">Código Leído:</p>
             <div id="result" class="text-xl font-mono break-all bg-white p-2 rounded-lg border border-blue-200 min-h-[40px]">
                 Esperando escaneo...
             </div>
+            <!-- Mensaje de error para la longitud del código -->
             <div id="error-message" class="text-red-600 mt-2 hidden text-sm"></div>
         </div>
 
@@ -64,7 +65,7 @@
             <button id="sendButton"
                     class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-150 ease-in-out disabled:opacity-50"
                     disabled>
-                <span id="sendText">Enviar HU</span>
+                <span id="sendText">Enviar Código a Google Sheet</span>
                 <span id="loadingSpinner" class="hidden h-5 w-5 border-4 border-white border-t-transparent rounded-full animate-spin inline-block align-middle"></span>
             </button>
             <button id="restartButton"
@@ -88,11 +89,14 @@
         // --- VARIABLES DE CONFIGURACIÓN (ACTUALIZAR ESTOS VALORES) ---
         // 1. URL de envío del formulario de Google (URL de action del form, VER NOTAS)
         const FORM_URL = 'https://docs.google.com/forms/u/0/d/e/1FAIpQLSfRc0zukVq-xcOlljQVYxVEaS0EV0VI2lcV4TEPj5yZCixwAQ/formResponse';
-        // 2. ID de la entrada del campo de texto en el formulario (e.g., entry.123456789)
-        const FORM_ENTRY_ID = 'entry.968870866';
-  
+        // 2. ID de la entrada del campo de texto del Código de Barras
+        const FORM_ENTRY_ID_BARCODE = 'entry.968870866'; 
+        
         // --- CONSTANTE DE VALIDACIÓN ---
-        const REQUIRED_LENGTH = 20;
+        const REQUIRED_LENGTH = 20; 
+        
+        // --- CONSTANTE DE RETRASO ---
+        const DETECTION_DELAY_MS = 1500; // 1.5 segundos de retraso
 
         // --- REFERENCIAS DOM ---
         const resultDisplay = document.getElementById('result');
@@ -116,6 +120,13 @@
             document.getElementById('statusModal').classList.remove('hidden');
         }
 
+        // Función de validación de estado: solo comprueba el código de barras
+        function checkSendAbility() {
+            // Habilitar botón solo si el código es válido (no nulo y 20 caracteres)
+            const hasBarcode = lastBarcode && lastBarcode.length === REQUIRED_LENGTH;
+            sendButton.disabled = !hasBarcode;
+        }
+
         // --- FUNCIÓN DE INICIALIZACIÓN DE QUAGGAJS ---
         function startScanner() {
             if (scannerRunning) return;
@@ -134,100 +145,141 @@
                     type: "LiveStream",
                     target: interactiveContainer,
                     constraints: {
-                        width: 640,
-                        height: 480,
-                        facingMode: "environment" // Pide la cámara trasera
+                        // Forzar el uso de la cámara trasera y alta resolución
+                        facingMode: "environment", 
+                        // Constraints específicos para mejorar la compatibilidad en móviles
+                        width: { min: 640 },
+                        height: { min: 480 }
                     },
                 },
+                // Ajustes de localización para mejorar la precisión y velocidad
+                locator: {
+                    patchSize: "medium", // Tamaño del parche para la detección
+                    halfSample: true, // Usa muestreo reducido para velocidad
+                    // Definir una zona de interés (centro de la imagen)
+                    area: {
+                        top: "20%",
+                        right: "20%",
+                        left: "20%",
+                        bottom: "20%"
+                    }
+                },
+                // Ajustes de decodificación
                 decoder: {
-                    readers: ["ean_reader", "upc_reader", "code_128_reader", "code_39_reader"] // Añadido Code 39
+                    readers: ["ean_reader", "upc_reader", "code_128_reader", "code_39_reader", "i2of5_reader"],
+                    multiple: false // Solo buscamos un código a la vez
                 }
             };
             
-            // Muestra mensaje de carga y se asegura de que sea visible antes de Quagga.init
+            // Muestra mensaje de carga
             const loadingDiv = document.querySelector('#interactive div');
             if(loadingDiv) {
                 loadingDiv.textContent = 'Cargando Cámara...';
                 loadingDiv.style.display = 'block'; 
             }
 
-
+            // Inicia Quagga
             Quagga.init(config, function(err) {
                 if (err) {
                     console.error("Error al inicializar Quagga:", err);
                     errorMessageDisplay.textContent = 'Error al iniciar la cámara: ' + err.message + '. Asegúrate de tener una cámara trasera disponible.';
                     errorMessageDisplay.classList.remove('hidden');
-                    // Oculta el mensaje de error en el viewport
                     if(loadingDiv) loadingDiv.textContent = 'Error: No se pudo acceder a la cámara.';
                     return;
                 }
                 
-                // **** MODIFICACIÓN SOLICITADA: OCULTAR MENSAJE UNA VEZ QUE LA CÁMARA INICIA ****
                 Quagga.start();
-                if (loadingDiv) loadingDiv.style.display = 'none';
-                // *****************************************************************************
+                if (loadingDiv) loadingDiv.style.display = 'none'; // Oculta el mensaje al activar la cámara
 
                 scannerRunning = true;
                 isQuaggaInitialized = true;
             });
+            
+            // Manejador para dibujar el marco de localización, útil para debugging
+            Quagga.onProcessed(function(result) {
+                const drawingCtx = Quagga.canvas.ctx.overlay;
+                const drawingCanvas = Quagga.canvas.dom.overlay;
+
+                if (result) {
+                    if (result.boxes) {
+                        drawingCtx.clearRect(0, 0, parseInt(drawingCanvas.getAttribute("width")), parseInt(drawingCanvas.getAttribute("height")));
+                        result.boxes.filter(function (box) {
+                            return box !== result.box;
+                        }).forEach(function (box) {
+                            Quagga.ImageDebug.drawPath(box, {x: 0, y: 1}, drawingCtx, {color: "green", lineWidth: 2});
+                        });
+                    }
+
+                    if (result.box) {
+                        Quagga.ImageDebug.drawPath(result.box, {x: 0, y: 1}, drawingCtx, {color: "#00F", lineWidth: 2});
+                    }
+
+                    if (result.codeResult && result.line) {
+                        Quagga.ImageDebug.drawPath(result.line, {x: 'x', y: 'y'}, drawingCtx, {color: "red", lineWidth: 3});
+                    }
+                }
+            });
         }
 
-        // --- MANEJADOR DE ESCANEO EXITOSO ---
+        // --- MANEJADOR DE ESCANEO EXITOSO (CON DELAY) ---
         Quagga.onDetected(function(data) {
             if (scannerRunning) {
-                lastBarcode = data.codeResult.code;
-                resultDisplay.textContent = lastBarcode;
                 
-                // Verifica la longitud inmediatamente después del escaneo
-                if (lastBarcode.length === REQUIRED_LENGTH) {
-                    sendButton.disabled = false;
-                    errorMessageDisplay.classList.add('hidden');
-                } else {
-                    sendButton.disabled = true;
-                    errorMessageDisplay.textContent = `Código leído (${lastBarcode.length} caracteres) no tiene la longitud requerida de ${REQUIRED_LENGTH} caracteres.`;
-                    errorMessageDisplay.classList.remove('hidden');
-                }
+                // Captura el código inmediatamente, pero establece la bandera a false
+                // para ignorar detecciones adicionales mientras esperamos el delay.
+                scannerRunning = false; 
+                const detectedCode = data.codeResult.code;
 
-                restartButton.style.display = 'block';
+                // Retraso de 1.5 segundos antes de detener la cámara y mostrar el resultado final
+                setTimeout(() => {
+                    Quagga.stop();
+                    
+                    lastBarcode = detectedCode;
+                    resultDisplay.textContent = lastBarcode;
+                    
+                    // 1. Verifica la longitud del código de barras (20 caracteres)
+                    if (lastBarcode.length === REQUIRED_LENGTH) {
+                        errorMessageDisplay.classList.add('hidden');
+                    } else {
+                        errorMessageDisplay.textContent = `Código leído (${lastBarcode.length} caracteres) no tiene la longitud requerida de ${REQUIRED_LENGTH} caracteres.`;
+                        errorMessageDisplay.classList.remove('hidden');
+                    }
 
-                // Detener el escáner inmediatamente después de la detección exitosa
-                Quagga.stop();
-                scannerRunning = false;
-                console.log("Escaneo exitoso y detenido. Código:", lastBarcode);
-                
-                // Asegurar que el mensaje de carga no reaparezca si se detiene (aunque ya está oculto)
-                const loadingDiv = document.querySelector('#interactive div');
-                if (loadingDiv) loadingDiv.style.display = 'none';
+                    restartButton.style.display = 'block';
+                    checkSendAbility(); // Habilita o deshabilita el botón 'Enviar'
+                }, DETECTION_DELAY_MS);
             }
         });
 
         // --- FUNCIÓN PARA ENVIAR DATOS A GOOGLE SHEET VÍA FORMULARIO ---
         async function sendToGoogleSheet() {
-            if (!lastBarcode || isSending) {
-                return;
-            }
-            if (FORM_URL.includes('REEMPLAZAR') || FORM_ENTRY_ID.includes('REEMPLAZAR')) {
-                showModal('Error de Configuración', 'Las variables FORM_URL y FORM_ENTRY_ID no han sido configuradas. Sigue los pasos de configuración.');
+            if (!lastBarcode || isSending) return;
+
+            if (FORM_URL.includes('REEMPLAZAR') || FORM_ENTRY_ID_BARCODE.includes('REEMPLAZAR')) {
+                showModal('Error de Configuración', 'Las variables de URL y Entry ID no han sido configuradas. Revisa FORM_URL y FORM_ENTRY_ID_BARCODE.');
                 return;
             }
 
-            // **** NUEVA VALIDACIÓN: DEBE TENER EXACTAMENTE 20 CARACTERES ****
+            // Validar longitud del código de barras COMPLETO
             if (lastBarcode.length !== REQUIRED_LENGTH) {
-                showModal('Error de Validación', `El código de barras debe tener exactamente ${REQUIRED_LENGTH} caracteres para ser enviado. El código actual tiene ${lastBarcode.length} caracteres.`);
-                return; // Detiene el proceso de envío
+                showModal('Error de Validación', `El código de barras debe tener exactamente ${REQUIRED_LENGTH} caracteres para ser enviado.`);
+                return; 
             }
-            // ***************************************************************
+
+            // --- LÓGICA DE TRUNCAMIENTO: Eliminar los primeros dos dígitos ---
+            const trimmedBarcode = lastBarcode.substring(2);
 
             isSending = true;
             sendButton.disabled = true;
             sendText.classList.add('hidden');
             loadingSpinner.classList.remove('hidden');
             restartButton.disabled = true;
-
-            const formData = new FormData();
-            formData.append(FORM_ENTRY_ID, lastBarcode);
             
-            // Se usa el modo 'no-cors' para permitir el envío al endpoint de Google Forms sin un servidor
+            // Construir FormData
+            const formData = new FormData();
+            // AQUI se envía el código recortado (trimmedBarcode)
+            formData.append(FORM_ENTRY_ID_BARCODE, trimmedBarcode); 
+            
             try {
                 const response = await fetch(FORM_URL, {
                     method: 'POST',
@@ -235,8 +287,8 @@
                     body: formData
                 });
 
-                // La respuesta es siempre "opaque" en 'no-cors', asumimos éxito si no hay error de red
-                showModal('¡Éxito!', `HU: "${lastBarcode}" enviado. Puedes escanear el siguiente.`);
+                // Mensaje de éxito informando el código que realmente se envió
+                showModal('¡Éxito!', `Código original: "${lastBarcode}". Enviado a la hoja: "${trimmedBarcode}".`);
 
                 // Preparar para el próximo escaneo
                 lastBarcode = null;
@@ -247,10 +299,10 @@
                 showModal('Error de Envío', 'Hubo un error de conexión al enviar el dato. Verifica la URL del Formulario.');
             } finally {
                 isSending = false;
-                // El botón de enviar permanece deshabilitado hasta que se escanee un nuevo código.
                 sendText.classList.remove('hidden');
                 loadingSpinner.classList.add('hidden');
                 restartButton.disabled = false;
+                checkSendAbility();
             }
         }
 
@@ -261,7 +313,7 @@
 
         // Botón Enviar
         sendButton.addEventListener('click', sendToGoogleSheet);
-
+        
         // Botón Escanear de Nuevo (Reinicia el escáner)
         restartButton.addEventListener('click', function() {
             if (!scannerRunning) {
@@ -274,10 +326,6 @@
             document.getElementById('statusModal').classList.add('hidden');
         });
         
-        // Se ha eliminado el Quagga.onImageProcessed, ya que la lógica de ocultar el mensaje de carga se movió a Quagga.init
-
     </script>
 </body>
 </html>
-
-
